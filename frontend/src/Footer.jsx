@@ -1,9 +1,8 @@
 import { CarFront, CircleParking, ArrowDown, X, Search } from "lucide-react";
 import { occupyPark } from "./api/occupyPark";
 import { getParkingLocations } from "./api/getParkingLocations";
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import SignupLogin from "./SignupLogin";
-import Cookies from "js-cookie";
 import CircularProgress from "@mui/material/CircularProgress";
 import { formatCoordinates } from "./utils/formatCoordinates";
 import Dictaphone from "./Dictaphone";
@@ -15,29 +14,18 @@ function Footer({
     setMarker,
     setParkingLocations,
     setUserId,
+    radius,
+    setMessage,
 }) {
     const [driveOpen, setDriveOpen] = useState(false);
     const [destinationInput, setDestinationInput] = useState("");
     const [showSignupLogin, setShowSignupLogin] = useState(false);
     const [parkIsLoading, setParkIsLoading] = useState(false);
+    const [loadingParkingLocations, setLoadingParkingLocations] =
+        useState(false);
 
-    const handleParkButton = () => {
-        // const userToken = Cookies.get("user_token");
-        // console.log("token: ", userToken);
-
-        // if (!userToken) {
-        //     setShowSignupLogin(true);
-        //     return;
-        // }
-
-        console.log(userId);
-        if (!userId) {
-            setShowSignupLogin(true);
-            return;
-        }
-
-        try {
-            setParkIsLoading(true);
+    const updateUserLocation = () => {
+        return new Promise((resolve, reject) => {
             if ("geolocation" in navigator) {
                 navigator.geolocation.getCurrentPosition(
                     (position) => {
@@ -47,24 +35,38 @@ function Footer({
                         };
                         setCurrentLocation(location);
                         setMarker("parking");
-                        occupyPark(userId, location.lat, location.lng);
-                        setParkIsLoading(false);
-                        console.log(location);
+                        resolve(position.coords);
                     },
                     (error) => {
                         // For some reason Chrome instantly throws an error when it asks for gps permission
-                        // setParkIsLoading(false);
-                        console.error("Error getting location:", error);
+                        reject(`Geolocation failed with error ${error}`);
                     },
                 );
             } else {
-                setParkIsLoading(false);
-                alert("Geolocation is not supported by your browser");
+                reject("Geolocation is not supported by your browser");
             }
-        } catch {
-            setParkIsLoading(false);
-            console.error("Error getting location");
+        });
+    };
+
+    const handleParkButton = async () => {
+        if (!userId) {
+            setShowSignupLogin(true);
+            return;
         }
+
+        setParkIsLoading(true);
+        updateUserLocation()
+            .then((coords) => {
+                occupyPark(userId, coords.latitude, coords.longitude);
+                setMessage("Parked successfully!");
+                setParkIsLoading(false);
+                console.log(coords);
+            })
+            .catch((error) => {
+                setMessage("Error adding park location");
+                setParkIsLoading(false);
+                console.error(error);
+            });
     };
 
     const handleDriveClick = () => {
@@ -92,11 +94,11 @@ function Footer({
                 return location;
             } else {
                 console.error("Geocoding failed:", data.status);
-                alert("Could not find this location");
+                setMessage("Could not find this location");
             }
         } catch (error) {
+            setMessage("Error fetching location data");
             console.error("Error fetching location:", error);
-            alert("Error fetching location data");
         }
     };
 
@@ -106,6 +108,7 @@ function Footer({
             return;
         }
 
+        setLoadingParkingLocations(true);
         const location = await getLocationFromDestination(destinationInput);
         console.log("Found location:", location);
         setCameraLocation(location);
@@ -114,7 +117,7 @@ function Footer({
             let parkingLocations = await getParkingLocations(
                 location.lat,
                 location.lng,
-                50,
+                radius,
             );
             parkingLocations = formatCoordinates(parkingLocations);
             setParkingLocations(parkingLocations);
@@ -128,9 +131,18 @@ function Footer({
             //     { lat: location.lat + 0.001, lng: location.lng + 0.002 }
             // ]);
 
+            if (parkingLocations.length === 0) {
+                setMessage(
+                    "No available parking locations found. Increase the range in settings.",
+                );
+            }
+
             setMarker("destination");
+            setLoadingParkingLocations(false);
         } catch (error) {
+            setMessage("Error fetching available parking locations");
             setMarker("destination");
+            setLoadingParkingLocations(false);
             console.error("Error getting parking locations:", error);
         }
     };
@@ -175,41 +187,50 @@ function Footer({
                             className={`absolute transition-all duration-300 ${driveOpen ? "pointer-events-auto translate-x-0 opacity-100" : "pointer-events-none invisible translate-x-4 opacity-0"}`}
                         >
                             <div className="flex items-center gap-4">
-                                <button
-                                    className="rounded-full border-2 border-slate-600 p-2 transition-colors hover:cursor-pointer hover:bg-slate-100"
-                                    onClick={handleCancelDriveClick}
-                                >
-                                    <X size={32} color="#2e2e2e" />
-                                </button>
-                                <div className="flex flex-col gap-1">
-                                    <h3 className="text-xl text-gray-800">
-                                        Set Destination:
-                                    </h3>
-                                    <div className="flex gap-2">
-                                        <input
-                                            type="text"
-                                            placeholder="Enter destination"
-                                            className="w-50 rounded-md border-2 border-slate-600 px-2 py-1"
-                                            value={destinationInput}
-                                            onChange={(e) =>
-                                                setDestinationInput(
-                                                    e.target.value,
-                                                )
-                                            }
-                                            onKeyDown={(e) => {
-                                                if (e.key === "Enter") {
-                                                    handleSearchButton();
-                                                }
-                                            }}
-                                        />
-                                        <button
-                                            className="rounded-md p-2 transition-colors hover:cursor-pointer hover:bg-slate-100"
-                                            onClick={handleSearchButton}
-                                        >
-                                            <Search color="#2e2e2e" />
-                                        </button>
+                                {loadingParkingLocations ? (
+                                    <div className="mx-auto flex w-92 items-center gap-4 rounded-xl border-slate-600 p-4">
+                                        <CircularProgress size={32} />
+                                        Loading available parking locations
                                     </div>
-                                </div>
+                                ) : (
+                                    <>
+                                        <button
+                                            className="rounded-full border-2 border-slate-600 p-2 transition-colors hover:cursor-pointer hover:bg-slate-100"
+                                            onClick={handleCancelDriveClick}
+                                        >
+                                            <X size={32} color="#2e2e2e" />
+                                        </button>
+                                        <div className="flex flex-col gap-1">
+                                            <h3 className="text-xl text-gray-800">
+                                                Set Destination:
+                                            </h3>
+                                            <div className="flex gap-2">
+                                                <input
+                                                    type="text"
+                                                    placeholder="Enter destination"
+                                                    className="w-42 rounded-md border-2 border-slate-600 px-2 py-1"
+                                                    value={destinationInput}
+                                                    onChange={(e) =>
+                                                        setDestinationInput(
+                                                            e.target.value,
+                                                        )
+                                                    }
+                                                    onKeyDown={(e) => {
+                                                        if (e.key === "Enter") {
+                                                            handleSearchButton();
+                                                        }
+                                                    }}
+                                                />
+                                                <button
+                                                    className="rounded-md p-2 transition-colors hover:cursor-pointer hover:bg-slate-100"
+                                                    onClick={handleSearchButton}
+                                                >
+                                                    <Search color="#2e2e2e" />
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </>
+                                )}
                             </div>
                         </div>
                     </div>
@@ -223,6 +244,8 @@ function Footer({
                             setCameraLocation={setCameraLocation}
                             setParkingLocations={setParkingLocations}
                             setMarker={setMarker}
+                            radius={radius}
+                            setMessage={setMessage}
                         />
                     </div>
                     {/* Park Button */}
